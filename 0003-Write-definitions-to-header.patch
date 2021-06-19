@@ -1,0 +1,79 @@
+From 791ed70d78ddcbba0f334dc5efc6c48840e9635b Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Sun, 27 Oct 2019 12:43:36 +0100
+Subject: Write definitions to header
+
+---
+ .../Configuration/UEBuildModuleCPP.cs         |  2 +-
+ .../Modes/GenerateClangDatabase.cs            | 21 +++++++++++++++++--
+ 2 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Configuration/UEBuildModuleCPP.cs b/Engine/Source/Programs/UnrealBuildTool/Configuration/UEBuildModuleCPP.cs
+index ad61e4bdf57..db94aa7d851 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Configuration/UEBuildModuleCPP.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Configuration/UEBuildModuleCPP.cs
+@@ -1071,7 +1071,7 @@ namespace UnrealBuildTool
+ 		/// <param name="IntermediateDirectory">Directory to create the intermediate file</param>
+ 		/// <param name="HeaderSuffix">Suffix for the included file</param>
+ 		/// <param name="Graph">The action graph being built</param>
+-		static void CreateHeaderForDefinitions(CppCompileEnvironment CompileEnvironment, DirectoryReference IntermediateDirectory, string HeaderSuffix, IActionGraphBuilder Graph)
++		public static void CreateHeaderForDefinitions(CppCompileEnvironment CompileEnvironment, DirectoryReference IntermediateDirectory, string HeaderSuffix, IActionGraphBuilder Graph)
+ 		{
+ 			if(CompileEnvironment.Definitions.Count > 0)
+ 			{
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index 799542f233c..654e26a2624 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -33,6 +33,12 @@ namespace UnrealBuildTool
+ 		[CommandLine("-GenerateEngineSourceDatabase")]
+ 		bool GenerateEngineSourceDatabase = false;
+ 
++		/// <summary>
++		/// If true Definitions are written to a header file, this reduces the size of the compilation database.
++		/// </summary>
++		[CommandLine("-UseDefinitionsHeader")]
++		bool UseDefinitionsHeader = true;
++
+ 		/// <summary>
+ 		/// Execute the command
+ 		/// </summary>
+@@ -94,12 +100,18 @@ namespace UnrealBuildTool
+ 					foreach (UEBuildBinary Binary in Target.Binaries)
+ 					{
+ 						CppCompileEnvironment BinaryCompileEnvironment = Binary.CreateBinaryCompileEnvironment(GlobalCompileEnvironment);
++
+ 						foreach (UEBuildModuleCPP Module in Binary.Modules.OfType<UEBuildModuleCPP>())
+ 						{
+ 							if (!Module.Rules.bUsePrecompiled || GenerateEngineSourceDatabase)
+ 							{
+ 								CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
+ 
++								if (UseDefinitionsHeader)
++								{
++									UEBuildModuleCPP.CreateHeaderForDefinitions(ModuleCompileEnvironment, Module.IntermediateDirectory, null);
++								}
++
+ 								UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
+ 
+ 								List<FileItem> InputFiles = new List<FileItem>();
+@@ -136,9 +148,14 @@ namespace UnrealBuildTool
+ 								{
+ 									CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
+ 								}
+-								foreach (string Definition in ModuleCompileEnvironment.Definitions)
++
++
++								if (!UseDefinitionsHeader)
+ 								{
+-									CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
++									foreach (string Definition in ModuleCompileEnvironment.Definitions)
++									{
++										CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
++									}
+ 								}
+ 								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
+ 								{
+-- 
+2.31.1
+

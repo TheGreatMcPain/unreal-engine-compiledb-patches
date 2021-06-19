@@ -1,0 +1,61 @@
+From b2eca335f5dcedd8f415913ad107943bdaf7e5ea Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Sat, 2 Nov 2019 11:01:52 +0100
+Subject: Added ability to generate entries for headers
+
+and Disabled DefinitionsHeader generation by default
+---
+ .../Modes/GenerateClangDatabase.cs              | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index 654e26a2624..da289a927ef 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -22,22 +22,28 @@ namespace UnrealBuildTool
+ 		List<string> FilterRules = new List<string>();
+ 
+ 		/// <summary>
+-		/// Path to the clang++ binary (default: "clang++")
++		/// Path to the clang++ binary (default: "clang++").
+ 		/// </summary>
+ 		[CommandLine("-ClangPath=")]
+ 		string ClangPath = "clang++";
+ 
+ 		/// <summary>
+-		/// If true compilation information for engine source files will be added
++		/// If true compilation information for engine source files will be added.
+ 		/// </summary>
+ 		[CommandLine("-GenerateEngineSourceDatabase")]
+ 		bool GenerateEngineSourceDatabase = false;
+ 
++		/// <summary>
++		/// If true header files will be added to the compilation database in addition to source files.
++		/// </summary>
++		[CommandLine("-GenerateEntriesForHeaderFiles")]
++		bool GenerateEntriesForHeaderFiles = false;
++
+ 		/// <summary>
+ 		/// If true Definitions are written to a header file, this reduces the size of the compilation database.
+ 		/// </summary>
+ 		[CommandLine("-UseDefinitionsHeader")]
+-		bool UseDefinitionsHeader = true;
++		bool UseDefinitionsHeader = false;
+ 
+ 		/// <summary>
+ 		/// Execute the command
+@@ -118,6 +124,11 @@ namespace UnrealBuildTool
+ 								InputFiles.AddRange(InputFileCollection.CPPFiles);
+ 								InputFiles.AddRange(InputFileCollection.CCFiles);
+ 
++								if (GenerateEntriesForHeaderFiles)
++								{
++									InputFiles.AddRange(InputFileCollection.HeaderFiles);
++								}
++
+ 								StringBuilder CommandBuilder = new StringBuilder();
+ 
+ 								CommandBuilder.AppendFormat("\"{0}\"", ClangPath);
+-- 
+2.31.1
+

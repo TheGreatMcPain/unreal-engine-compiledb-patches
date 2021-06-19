@@ -1,0 +1,161 @@
+From a26f9805bbb73669d63387456f23a71be324915e Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Thu, 20 Feb 2020 13:46:51 +0100
+Subject: Update GenerateClangDatabase.cs
+
+Added an option that will write compile flags to config files to reduce compialtiondb size
+
+Renamed GenerateEngineSourceDatabase to ForceGenerationOfEngineDatabase
+
+Modified logic that determines, when to generate compialtion commands for a module and when not not
+---
+ .../Modes/GenerateClangDatabase.cs            | 63 ++++++++++++++-----
+ 1 file changed, 47 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index da289a927ef..db58c4f92b0 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -2,9 +2,9 @@
+ 
+ using System;
+ using System.Collections.Generic;
++using System.IO;
+ using System.Linq;
+ using System.Text;
+-using System.Threading.Tasks;
+ using Tools.DotNETCommon;
+ 
+ namespace UnrealBuildTool
+@@ -28,10 +28,10 @@ namespace UnrealBuildTool
+ 		string ClangPath = "clang++";
+ 
+ 		/// <summary>
+-		/// If true compilation information for engine source files will be added.
++		/// If true compilation information for precompiled engine source files will be added.
+ 		/// </summary>
+-		[CommandLine("-GenerateEngineSourceDatabase")]
+-		bool GenerateEngineSourceDatabase = false;
++		[CommandLine("-ForceGenerationOfEngineDatabase")]
++		bool ForceGenerationOfEngineDatabase = false;
+ 
+ 		/// <summary>
+ 		/// If true header files will be added to the compilation database in addition to source files.
+@@ -45,6 +45,12 @@ namespace UnrealBuildTool
+ 		[CommandLine("-UseDefinitionsHeader")]
+ 		bool UseDefinitionsHeader = false;
+ 
++		/// <summary>
++		/// If true compilation flags are written to a .txt file, this drastically reduces the size of the compilation database.
++		/// </summary>
++		[CommandLine("-UseClangConfigFiles")]
++		bool UseClangConfigFiles = false;
++
+ 		/// <summary>
+ 		/// Execute the command
+ 		/// </summary>
+@@ -61,10 +67,10 @@ namespace UnrealBuildTool
+ 
+ 			// Parse the filter argument
+ 			FileFilter FileFilter = null;
+-			if(FilterRules.Count > 0)
++			if (FilterRules.Count > 0)
+ 			{
+ 				FileFilter = new FileFilter(FileFilterType.Exclude);
+-				foreach(string FilterRule in FilterRules)
++				foreach (string FilterRule in FilterRules)
+ 				{
+ 					FileFilter.AddRules(FilterRule.Split(';'));
+ 				}
+@@ -109,7 +115,9 @@ namespace UnrealBuildTool
+ 
+ 						foreach (UEBuildModuleCPP Module in Binary.Modules.OfType<UEBuildModuleCPP>())
+ 						{
+-							if (!Module.Rules.bUsePrecompiled || GenerateEngineSourceDatabase)
++							// If no project file is specified we assume a a custom egnine engine build in this case generate compilation commands for all modules.
++							// If a project file is specified only generate compilation commands for project modules.
++							if (Target.ProjectFile == null || (Target.ProjectFile != null && Module.IntermediateDirectory.IsUnderDirectory(Target.ProjectFile.Directory)) || ForceGenerationOfEngineDatabase)
+ 							{
+ 								CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
+ 
+@@ -130,6 +138,7 @@ namespace UnrealBuildTool
+ 								}
+ 
+ 								StringBuilder CommandBuilder = new StringBuilder();
++								StringBuilder ArgumentBuilder = new StringBuilder();
+ 
+ 								CommandBuilder.AppendFormat("\"{0}\"", ClangPath);
+ 
+@@ -137,13 +146,14 @@ namespace UnrealBuildTool
+ 								if (Target.Platform == UnrealTargetPlatform.Mac)
+ 								{
+ 									MacToolChain PlatformToolChain = (MacToolChain)TargetToolChain;
+-									CommandBuilder.Append(PlatformToolChain.GetCompileArguments_Global(ModuleCompileEnvironment));
+-									CommandBuilder.Append(MacToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
+-								} else if(Target.Platform == UnrealTargetPlatform.Linux)
++									ArgumentBuilder.Append(PlatformToolChain.GetCompileArguments_Global(ModuleCompileEnvironment));
++									ArgumentBuilder.Append(MacToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
++								}
++								else if (Target.Platform == UnrealTargetPlatform.Linux)
+ 								{
+ 									LinuxToolChain PlatformToolChain = (LinuxToolChain)TargetToolChain;
+-									CommandBuilder.Append(PlatformToolChain.GetCLArguments_Global(ModuleCompileEnvironment));
+-									CommandBuilder.Append(LinuxToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
++									ArgumentBuilder.Append(PlatformToolChain.GetCLArguments_Global(ModuleCompileEnvironment));
++									ArgumentBuilder.Append(LinuxToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
+ 								}
+ 
+ 								if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp17)
+@@ -157,7 +167,7 @@ namespace UnrealBuildTool
+ 
+ 								foreach (FileItem ForceIncludeFile in ModuleCompileEnvironment.ForceIncludeFiles)
+ 								{
+-									CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
++									ArgumentBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
+ 								}
+ 
+ 
+@@ -165,16 +175,37 @@ namespace UnrealBuildTool
+ 								{
+ 									foreach (string Definition in ModuleCompileEnvironment.Definitions)
+ 									{
+-										CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
++										ArgumentBuilder.AppendFormat(" -D \"{0}\"", Definition);
+ 									}
+ 								}
+ 								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
+ 								{
+-									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++									ArgumentBuilder.AppendFormat(" -I \"{0}\"", IncludePath);
+ 								}
+ 								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.SystemIncludePaths)
+ 								{
+-									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++									ArgumentBuilder.AppendFormat(" -I \"{0}\"", IncludePath);
++								}
++
++
++								if (UseClangConfigFiles)
++								{
++									string ConfigFilePath = FileReference.Combine(Module.IntermediateDirectory, "compile_config.txt").FullName;
++
++									StreamWriter ConfigFileWriter = new StreamWriter(ConfigFilePath);
++
++									ArgumentBuilder = ArgumentBuilder.Replace(" -", "\n-");
++
++									ConfigFileWriter.Write(ArgumentBuilder.Replace("\\", "\\\\"));
++
++									ConfigFileWriter.Close();
++
++									CommandBuilder.AppendFormat(" --config \"{0}\"", ConfigFilePath);
++								}
++								else
++								{
++									CommandBuilder.AppendFormat(" \"{0}\"", ArgumentBuilder);
++
+ 								}
+ 
+ 								foreach (FileItem InputFile in InputFiles)
+-- 
+2.31.1
+

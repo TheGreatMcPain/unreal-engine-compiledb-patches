@@ -1,0 +1,73 @@
+From 2bfaf7c71d13b8d663aa5de0d807769f60d5155f Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Tue, 23 Jun 2020 15:03:38 +0200
+Subject: Fix some issues caused by rebase to latest master
+
+---
+ .../Modes/GenerateClangDatabase.cs             | 18 +++---------------
+ .../Platform/Linux/LinuxToolChain.cs           |  2 +-
+ 2 files changed, 4 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index db58c4f92b0..a38a14e3d4d 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -86,23 +86,11 @@ namespace UnrealBuildTool
+ 				Dictionary<FileReference, string> FileToCommand = new Dictionary<FileReference, string>();
+ 				foreach (TargetDescriptor TargetDescriptor in TargetDescriptors)
+ 				{
+-					// Disable PCHs and unity builds for the target
+-					TargetDescriptor.AdditionalArguments = TargetDescriptor.AdditionalArguments.Append(new string[] { "-NoPCH", "-DisableUnity" });
+-
+ 					// Create a makefile for the target
+ 					UEBuildTarget Target = UEBuildTarget.Create(TargetDescriptor, BuildConfiguration.bSkipRulesCompile, BuildConfiguration.bUsePrecompiled);
+ 
+ 					// The created makefile is not used, but triggering the build will run UHT and add intermediate include directories.
+-					Target.Build(BuildConfiguration, WorkingSet, true, TargetDescriptor.SingleFileToCompile);
+-
+-					// Convince each module to output its generated code include path
+-					foreach (UEBuildBinary Binary in Target.Binaries)
+-					{
+-						foreach (UEBuildModuleCPP Module in Binary.Modules.OfType<UEBuildModuleCPP>())
+-						{
+-							Module.bAddGeneratedCodeIncludePath = true;
+-						}
+-					}
++					Target.Build(BuildConfiguration, WorkingSet, true, TargetDescriptor.SpecificFilesToCompile)
+ 
+ 					UEToolChain TargetToolChain = UEBuildPlatform.GetBuildPlatform(TargetDescriptor.Platform).CreateToolChain(Target.Rules);
+ 					TargetToolChain.SetEnvironmentVariables();
+@@ -123,7 +111,7 @@ namespace UnrealBuildTool
+ 
+ 								if (UseDefinitionsHeader)
+ 								{
+-									UEBuildModuleCPP.CreateHeaderForDefinitions(ModuleCompileEnvironment, Module.IntermediateDirectory, null);
++									UEBuildModuleCPP.CreateHeaderForDefinitions(ModuleCompileEnvironment, Module.IntermediateDirectory, null, new NullActionGraphBuilder());
+ 								}
+ 
+ 								UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
+@@ -204,7 +192,7 @@ namespace UnrealBuildTool
+ 								}
+ 								else
+ 								{
+-									CommandBuilder.AppendFormat(" \"{0}\"", ArgumentBuilder);
++									CommandBuilder.AppendFormat(" {0}", ArgumentBuilder);
+ 
+ 								}
+ 
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs b/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
+index 3989237790f..807f1b226c8 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
+@@ -889,7 +889,7 @@ namespace UnrealBuildTool
+ 			string.Format("Unknown C++ standard type set: {0}", CompileEnvironment.CppStandard));
+ 		}
+ 
+-		static string GetCompileArguments_CPP(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_CPP(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x c++";
+-- 
+2.31.1
+

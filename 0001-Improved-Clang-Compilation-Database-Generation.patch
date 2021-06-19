@@ -1,0 +1,174 @@
+From 7c9aba91d546bff658c6a19fcf5864a1b9b3e4b1 Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Fri, 18 Oct 2019 11:43:15 +0200
+Subject: Improved Clang Compilation Database Generation
+
+Added CL option to specify the path to the clang++ binary
+
+Crate Makefile before generation to run UHT and add intermediate include directories
+
+Removed bUsePrecompiled check
+
+Output compilation database to project direcctory if -project is specified
+---
+ .gitignore                                    |  3 +
+ .../Modes/GenerateClangDatabase.cs            | 98 +++++++++++--------
+ 2 files changed, 58 insertions(+), 43 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 64a4f881529..8b6b83f3899 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -230,3 +230,6 @@ Saved/
+ 
+ # Ignore the headers and cpp files in the clang toolchain on Linux
+ Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/**
++
++# Ignore clang compilation database
++compile_commands.json
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index 66044e95bf0..87ed7d5ad32 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -21,6 +21,12 @@ namespace UnrealBuildTool
+ 		[CommandLine("-Filter=")]
+ 		List<string> FilterRules = new List<string>();
+ 
++		/// <summary>
++		/// Path to the clang++ binary (default: "clang++")
++		/// </summary>
++		[CommandLine("-ClangPath=")]
++		string ClangPath = "clang++";
++
+ 		/// <summary>
+ 		/// Execute the command
+ 		/// </summary>
+@@ -62,9 +68,8 @@ namespace UnrealBuildTool
+ 					// Create a makefile for the target
+ 					UEBuildTarget Target = UEBuildTarget.Create(TargetDescriptor, BuildConfiguration.bSkipRulesCompile, BuildConfiguration.bUsePrecompiled);
+ 
+-					// Find the location of the compiler
+-					VCEnvironment Environment = VCEnvironment.Create(WindowsCompiler.Clang, Target.Platform, Target.Rules.WindowsPlatform.Architecture, null, Target.Rules.WindowsPlatform.WindowsSdkVersion, null);
+-					FileReference ClangPath = FileReference.Combine(Environment.CompilerDir, "bin", "clang++.exe");
++					// The created makefile is not used, but triggering the build will run UHT and add intermediate include directories.
++					Target.Build(BuildConfiguration, WorkingSet, true, TargetDescriptor.SingleFileToCompile);
+ 
+ 					// Convince each module to output its generated code include path
+ 					foreach (UEBuildBinary Binary in Target.Binaries)
+@@ -79,66 +84,73 @@ namespace UnrealBuildTool
+ 					CppCompileEnvironment GlobalCompileEnvironment = Target.CreateCompileEnvironmentForProjectFiles();
+ 					foreach (UEBuildBinary Binary in Target.Binaries)
+ 					{
++
+ 						CppCompileEnvironment BinaryCompileEnvironment = Binary.CreateBinaryCompileEnvironment(GlobalCompileEnvironment);
+ 						foreach (UEBuildModuleCPP Module in Binary.Modules.OfType<UEBuildModuleCPP>())
+ 						{
+-							if(!Module.Rules.bUsePrecompiled)
+-							{
+-								UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
++							UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
+ 
+-								List<FileItem> InputFiles = new List<FileItem>();
+-								InputFiles.AddRange(InputFileCollection.CPPFiles);
+-								InputFiles.AddRange(InputFileCollection.CCFiles);
++							List<FileItem> InputFiles = new List<FileItem>();
++							InputFiles.AddRange(InputFileCollection.CPPFiles);
++							InputFiles.AddRange(InputFileCollection.CCFiles);
+ 
+-								CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
++							CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
+ 
+-								StringBuilder CommandBuilder = new StringBuilder();
+-								CommandBuilder.AppendFormat("\"{0}\"", ClangPath.FullName);
++							StringBuilder CommandBuilder = new StringBuilder();
++							CommandBuilder.AppendFormat("\"{0}\"", ClangPath);
+ 
+-								if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp17)
+-								{
+-									CommandBuilder.AppendFormat(" -std=c++17");
+-								}
+-								else if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp14)
+-								{
+-									CommandBuilder.AppendFormat(" -std=c++14");
+-								}
++							if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp17)
++							{
++								CommandBuilder.AppendFormat(" -std=c++17");
++							}
++							else if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp14)
++							{
++								CommandBuilder.AppendFormat(" -std=c++14");
++							}
+ 
+-								foreach (FileItem ForceIncludeFile in ModuleCompileEnvironment.ForceIncludeFiles)
+-								{
+-									CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
+-								}
+-								foreach (string Definition in ModuleCompileEnvironment.Definitions)
+-								{
+-									CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
+-								}
+-								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
+-								{
+-									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
+-								}
+-								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.SystemIncludePaths)
+-								{
+-									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
+-								}
++							foreach (FileItem ForceIncludeFile in ModuleCompileEnvironment.ForceIncludeFiles)
++							{
++								CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
++							}
++							foreach (string Definition in ModuleCompileEnvironment.Definitions)
++							{
++								CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
++							}
++							foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
++							{
++								CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++							}
++							foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.SystemIncludePaths)
++							{
++								CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++							}
+ 
+-								foreach (FileItem InputFile in InputFiles)
++							foreach (FileItem InputFile in InputFiles)
++							{
++								if(FileFilter == null || FileFilter.Matches(InputFile.Location.MakeRelativeTo(UnrealBuildTool.RootDirectory)))
+ 								{
+-									if(FileFilter == null || FileFilter.Matches(InputFile.Location.MakeRelativeTo(UnrealBuildTool.RootDirectory)))
+-									{
+-										FileToCommand[InputFile.Location] = String.Format("{0} \"{1}\"", CommandBuilder, InputFile.FullName);
+-									}
++									FileToCommand[InputFile.Location] = String.Format("{0} \"{1}\"", CommandBuilder, InputFile.FullName);
+ 								}
+ 							}
+ 						}
+ 					}
+ 				}
+ 
++				// Determine the output dirctory for the database: Either a project dir or the root dir of the Engine
++				DirectoryReference OutDirectory = UnrealBuildTool.RootDirectory;
++
++				TargetDescriptor ProjectTargetDescriptor = TargetDescriptors.Find(Target => Target.ProjectFile != null);
++				if (ProjectTargetDescriptor != null)
++				{
++					OutDirectory = ProjectTargetDescriptor.ProjectFile.Directory;
++				}
++
+ 				// Write the compile database
+-				FileReference DatabaseFile = FileReference.Combine(UnrealBuildTool.RootDirectory, "compile_commands.json");
++				FileReference DatabaseFile = FileReference.Combine(OutDirectory, "compile_commands.json");
+ 				using (JsonWriter Writer = new JsonWriter(DatabaseFile))
+ 				{
+ 					Writer.WriteArrayStart();
+-					foreach(KeyValuePair<FileReference, string> FileCommandPair in FileToCommand.OrderBy(x => x.Key.FullName))
++					foreach (KeyValuePair<FileReference, string> FileCommandPair in FileToCommand.OrderBy(x => x.Key.FullName))
+ 					{
+ 						Writer.WriteObjectStart();
+ 						Writer.WriteValue("file", FileCommandPair.Key.FullName);
+-- 
+2.31.1
+

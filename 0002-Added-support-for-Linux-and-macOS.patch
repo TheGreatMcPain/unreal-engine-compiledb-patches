@@ -1,0 +1,248 @@
+From 0b4c3198118c8f7864dda642bb8ccec3d5382dd7 Mon Sep 17 00:00:00 2001
+From: Lorenz Junglas <lolleko@users.noreply.github.com>
+Date: Sat, 19 Oct 2019 15:41:16 +0200
+Subject: Added support for Linux and macOS
+
+---
+ .../Modes/GenerateClangDatabase.cs            | 97 ++++++++++++-------
+ .../Platform/Linux/LinuxToolChain.cs          |  8 +-
+ .../Platform/Mac/MacToolChain.cs              | 14 +--
+ 3 files changed, 72 insertions(+), 47 deletions(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index 87ed7d5ad32..799542f233c 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -27,6 +27,12 @@ namespace UnrealBuildTool
+ 		[CommandLine("-ClangPath=")]
+ 		string ClangPath = "clang++";
+ 
++		/// <summary>
++		/// If true compilation information for engine source files will be added
++		/// </summary>
++		[CommandLine("-GenerateEngineSourceDatabase")]
++		bool GenerateEngineSourceDatabase = false;
++
+ 		/// <summary>
+ 		/// Execute the command
+ 		/// </summary>
+@@ -80,56 +86,75 @@ namespace UnrealBuildTool
+ 						}
+ 					}
+ 
++					UEToolChain TargetToolChain = UEBuildPlatform.GetBuildPlatform(TargetDescriptor.Platform).CreateToolChain(Target.Rules);
++					TargetToolChain.SetEnvironmentVariables();
++
+ 					// Create all the binaries and modules
+ 					CppCompileEnvironment GlobalCompileEnvironment = Target.CreateCompileEnvironmentForProjectFiles();
+ 					foreach (UEBuildBinary Binary in Target.Binaries)
+ 					{
+-
+ 						CppCompileEnvironment BinaryCompileEnvironment = Binary.CreateBinaryCompileEnvironment(GlobalCompileEnvironment);
+ 						foreach (UEBuildModuleCPP Module in Binary.Modules.OfType<UEBuildModuleCPP>())
+ 						{
+-							UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
++							if (!Module.Rules.bUsePrecompiled || GenerateEngineSourceDatabase)
++							{
++								CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
+ 
+-							List<FileItem> InputFiles = new List<FileItem>();
+-							InputFiles.AddRange(InputFileCollection.CPPFiles);
+-							InputFiles.AddRange(InputFileCollection.CCFiles);
++								UEBuildModuleCPP.InputFileCollection InputFileCollection = Module.FindInputFiles(Target.Platform, new Dictionary<DirectoryItem, FileItem[]>());
+ 
+-							CppCompileEnvironment ModuleCompileEnvironment = Module.CreateModuleCompileEnvironment(Target.Rules, BinaryCompileEnvironment);
++								List<FileItem> InputFiles = new List<FileItem>();
++								InputFiles.AddRange(InputFileCollection.CPPFiles);
++								InputFiles.AddRange(InputFileCollection.CCFiles);
+ 
+-							StringBuilder CommandBuilder = new StringBuilder();
+-							CommandBuilder.AppendFormat("\"{0}\"", ClangPath);
++								StringBuilder CommandBuilder = new StringBuilder();
+ 
+-							if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp17)
+-							{
+-								CommandBuilder.AppendFormat(" -std=c++17");
+-							}
+-							else if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp14)
+-							{
+-								CommandBuilder.AppendFormat(" -std=c++14");
+-							}
++								CommandBuilder.AppendFormat("\"{0}\"", ClangPath);
+ 
+-							foreach (FileItem ForceIncludeFile in ModuleCompileEnvironment.ForceIncludeFiles)
+-							{
+-								CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
+-							}
+-							foreach (string Definition in ModuleCompileEnvironment.Definitions)
+-							{
+-								CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
+-							}
+-							foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
+-							{
+-								CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
+-							}
+-							foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.SystemIncludePaths)
+-							{
+-								CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
+-							}
++								// On Mac and Linux additional arguments are required
++								if (Target.Platform == UnrealTargetPlatform.Mac)
++								{
++									MacToolChain PlatformToolChain = (MacToolChain)TargetToolChain;
++									CommandBuilder.Append(PlatformToolChain.GetCompileArguments_Global(ModuleCompileEnvironment));
++									CommandBuilder.Append(MacToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
++								} else if(Target.Platform == UnrealTargetPlatform.Linux)
++								{
++									LinuxToolChain PlatformToolChain = (LinuxToolChain)TargetToolChain;
++									CommandBuilder.Append(PlatformToolChain.GetCLArguments_Global(ModuleCompileEnvironment));
++									CommandBuilder.Append(LinuxToolChain.GetCompileArguments_CPP(ModuleCompileEnvironment));
++								}
+ 
+-							foreach (FileItem InputFile in InputFiles)
+-							{
+-								if(FileFilter == null || FileFilter.Matches(InputFile.Location.MakeRelativeTo(UnrealBuildTool.RootDirectory)))
++								if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp17)
++								{
++									CommandBuilder.AppendFormat(" -std=c++17");
++								}
++								else if (ModuleCompileEnvironment.CppStandard >= CppStandardVersion.Cpp14)
++								{
++									CommandBuilder.AppendFormat(" -std=c++14");
++								}
++
++								foreach (FileItem ForceIncludeFile in ModuleCompileEnvironment.ForceIncludeFiles)
++								{
++									CommandBuilder.AppendFormat(" -include \"{0}\"", ForceIncludeFile.FullName);
++								}
++								foreach (string Definition in ModuleCompileEnvironment.Definitions)
++								{
++									CommandBuilder.AppendFormat(" -D\"{0}\"", Definition);
++								}
++								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.UserIncludePaths)
++								{
++									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++								}
++								foreach (DirectoryReference IncludePath in ModuleCompileEnvironment.SystemIncludePaths)
++								{
++									CommandBuilder.AppendFormat(" -I\"{0}\"", IncludePath);
++								}
++
++								foreach (FileItem InputFile in InputFiles)
+ 								{
+-									FileToCommand[InputFile.Location] = String.Format("{0} \"{1}\"", CommandBuilder, InputFile.FullName);
++									if (FileFilter == null || FileFilter.Matches(InputFile.Location.MakeRelativeTo(UnrealBuildTool.RootDirectory)))
++									{
++										FileToCommand[InputFile.Location] = String.Format("{0} \"{1}\"", CommandBuilder, InputFile.FullName);
++									}
+ 								}
+ 							}
+ 						}
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs b/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
+index b952bbba819..3989237790f 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Platform/Linux/LinuxToolChain.cs
+@@ -547,7 +547,7 @@ namespace UnrealBuildTool
+ 			return false;
+ 		}
+ 
+-		protected virtual string GetCLArguments_Global(CppCompileEnvironment CompileEnvironment)
++		public virtual string GetCLArguments_Global(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 
+@@ -870,7 +870,7 @@ namespace UnrealBuildTool
+ 				: string.Format("{0}={1}", myKey, myValue);
+ 		}
+ 
+-		static string GetCompilerStandardVersion_CPP(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompilerStandardVersion_CPP(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			if (CompileEnvironment.CppStandard == CppStandardVersion.Cpp14 || CompileEnvironment.CppStandard == CppStandardVersion.Default)
+ 			{
+@@ -897,14 +897,14 @@ namespace UnrealBuildTool
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_C()
++		public static string GetCompileArguments_C()
+ 		{
+ 			string Result = "";
+ 			Result += " -x c";
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_MM(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_MM(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x objective-c++";
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Platform/Mac/MacToolChain.cs b/Engine/Source/Programs/UnrealBuildTool/Platform/Mac/MacToolChain.cs
+index 1941687fbe8..5e39210cd5f 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Platform/Mac/MacToolChain.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Platform/Mac/MacToolChain.cs
+@@ -186,7 +186,7 @@ namespace UnrealBuildTool
+ 			return ArchArg;
+ 		}
+ 
+-		string GetCompileArguments_Global(CppCompileEnvironment CompileEnvironment)
++		public string GetCompileArguments_Global(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 
+@@ -291,7 +291,7 @@ namespace UnrealBuildTool
+ 			return Result;
+ 		}
+ 
+-		static string GetCppStandardCompileArgument(CppCompileEnvironment CompileEnvironment)
++		public static string GetCppStandardCompileArgument(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			var Mapping = new Dictionary<CppStandardVersion, string>
+ 			{
+@@ -303,7 +303,7 @@ namespace UnrealBuildTool
+ 			return Mapping[CompileEnvironment.CppStandard];
+ 		}
+ 
+-		static string GetCompileArguments_CPP(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_CPP(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x objective-c++";
+@@ -314,7 +314,7 @@ namespace UnrealBuildTool
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_MM(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_MM(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x objective-c++";
+@@ -325,7 +325,7 @@ namespace UnrealBuildTool
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_M(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_M(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x objective-c";
+@@ -335,14 +335,14 @@ namespace UnrealBuildTool
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_C()
++		public static string GetCompileArguments_C()
+ 		{
+ 			string Result = "";
+ 			Result += " -x c";
+ 			return Result;
+ 		}
+ 
+-		static string GetCompileArguments_PCH(CppCompileEnvironment CompileEnvironment)
++		public static string GetCompileArguments_PCH(CppCompileEnvironment CompileEnvironment)
+ 		{
+ 			string Result = "";
+ 			Result += " -x objective-c++-header";
+-- 
+2.31.1
+

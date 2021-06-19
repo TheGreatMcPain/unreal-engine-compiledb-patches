@@ -1,0 +1,25 @@
+From bc047290fcc4c7d7918021eae1c379f71e14e6a0 Mon Sep 17 00:00:00 2001
+From: TheGreatMcPain <jmcclain2020@protonmail.com>
+Date: Fri, 18 Jun 2021 13:18:02 -0500
+Subject: Fix missing semicolon
+
+---
+ .../Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+index a38a14e3d4d..2b6e46c4f4c 100644
+--- a/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
++++ b/Engine/Source/Programs/UnrealBuildTool/Modes/GenerateClangDatabase.cs
+@@ -90,7 +90,7 @@ namespace UnrealBuildTool
+ 					UEBuildTarget Target = UEBuildTarget.Create(TargetDescriptor, BuildConfiguration.bSkipRulesCompile, BuildConfiguration.bUsePrecompiled);
+ 
+ 					// The created makefile is not used, but triggering the build will run UHT and add intermediate include directories.
+-					Target.Build(BuildConfiguration, WorkingSet, true, TargetDescriptor.SpecificFilesToCompile)
++					Target.Build(BuildConfiguration, WorkingSet, true, TargetDescriptor.SpecificFilesToCompile);
+ 
+ 					UEToolChain TargetToolChain = UEBuildPlatform.GetBuildPlatform(TargetDescriptor.Platform).CreateToolChain(Target.Rules);
+ 					TargetToolChain.SetEnvironmentVariables();
+-- 
+2.31.1
+
